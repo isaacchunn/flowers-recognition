@@ -27,18 +27,21 @@ class BasePretrainedModel(nn.Module):
         """
         # For this baseline, we'll use ResNet50 without any modifications
         # We can replace this with other architectures like VGG, DenseNet, etc
-        if self.model_name == 'resnet50':
+        if self.model_name == 'resnet18':
+            model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+            # Replace the final fully connected layer
+            num_ftrs = model.fc.in_features
+            model.fc = nn.Linear(num_ftrs, self.num_classes)
+        elif self.model_name == 'resnet50':
             model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
             # Replace the final fully connected layer
             num_ftrs = model.fc.in_features
             model.fc = nn.Linear(num_ftrs, self.num_classes)
-        
         elif self.model_name == 'vgg16':
             model = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
             # Replace the final classifier
             num_ftrs = model.classifier[6].in_features
             model.classifier[6] = nn.Linear(num_ftrs, self.num_classes)
-        
         elif self.model_name == 'densenet121':
             model = models.densenet121(weights=models.DenseNet121_Weights.IMAGENET1K_V1)
             # Replace the final classifier

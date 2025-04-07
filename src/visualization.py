@@ -262,19 +262,19 @@ def visualize_misclassifications_with_closest_images(model, data_loader, class_n
         # Plot closest true class image (row 0)
         true_example_img = denormalize(true_img)
         axes[0, i].imshow(true_example_img)
-        axes[0, i].set_title(f"Closest in true class:\n{class_names[true_label]}")
+        axes[0, i].set_title(f"Closest in true class:\n{class_names[true_label]} L: {true_label}")
         axes[0, i].axis('off')
         
         # Plot misclassified image (row 1)
         wrong_img_display = denormalize(wrong_img)
         axes[1, i].imshow(wrong_img_display)
-        axes[1, i].set_title(f"Misclassified\nTrue: {class_names[true_label]}\nPred: {class_names[pred_label]}")
+        axes[1, i].set_title(f"Misclassified\nTrue: {class_names[true_label]} L: {true_label}\nPred: {class_names[pred_label]} L: {pred_label}")
         axes[1, i].axis('off')
         
         # Plot closest predicted class image (row 2)
         pred_example_img = denormalize(pred_img)
         axes[2, i].imshow(pred_example_img)
-        axes[2, i].set_title(f"Closest in pred class:\n{class_names[pred_label]}")
+        axes[2, i].set_title(f"Closest in pred class:\n{class_names[pred_label]} L: {pred_label}")
         axes[2, i].axis('off')
     
     plt.tight_layout()
