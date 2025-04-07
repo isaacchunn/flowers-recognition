@@ -7,12 +7,15 @@ import copy
 import random
 from tqdm import tqdm
 from torchvision import transforms
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
+from skimage.transform import resize
 
 def denormalize(img_tensor, normalize_mean=[0.485, 0.456, 0.406], normalize_std=[0.229, 0.224, 0.225]):
     """
     Reverse the normalization process to convert tensors back to displayable images
     """
-    img = img_tensor.numpy().transpose((1, 2, 0))
+    img = img_tensor.numpy().transpose((1, 2, 0)) 
     mean = np.array(normalize_mean)
     std = np.array(normalize_std)
     img = std * img + mean
@@ -413,3 +416,219 @@ def find_closest_image(model, dataset, target_features, target_class, device=Non
             closest_img = batch_imgs[batch_max_idx].cpu()  # Move back to CPU for storing
     
     return closest_img
+
+
+def plot_top_10_confusion_matrix(y_true, y_pred, class_names=None, top_n=10, figsize=(12, 8)):
+    """
+    Plot confusion matrix for the top N most frequent classes.
+    
+    Args:
+        y_true: True labels
+        y_pred: Predicted labels
+        class_names: List of class names
+        top_n: Number of top features to plot (default is 10)
+        figsize: Size of the plot
+    """
+    # Get the confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    # Sum each row to get the total occurrences of each class
+    class_totals = np.sum(cm, axis=1)
+    
+    # Get indices of the top N most frequent classes based on total occurrences
+    top_n_indices = np.argsort(class_totals)[-top_n:][::-1]  # Sort and get top n classes
+    
+    # Filter the confusion matrix for the top N classes
+    cm_top_n = cm[top_n_indices, :][:, top_n_indices]
+    
+    # Get the class names for the top N classes
+    top_n_class_names = [class_names[i] for i in top_n_indices]
+    
+    # Plot the confusion matrix for the top N classes
+    plt.figure(figsize=figsize)
+    ax = sns.heatmap(cm_top_n, annot=True, fmt="d", cmap="Blues", xticklabels=top_n_class_names, yticklabels=top_n_class_names, 
+                     cbar_kws={'label': 'Number of Predictions'}, annot_kws={"size": 10})
+    
+    # Rotate axis labels for readability
+    plt.xticks(rotation=90)
+    plt.yticks(rotation=0)
+    
+    # Set labels and title
+    plt.xlabel('Predicted Labels')
+    plt.ylabel('True Labels')
+    plt.title(f'Confusion Matrix - Top {top_n} Classes')
+    
+    # Tight layout to avoid clipping
+    plt.tight_layout()
+    plt.show()
+
+    # Print classification report for top N classes
+    print(classification_report(y_true, y_pred, target_names=top_n_class_names))
+
+def generate_cam(model, image, target_class, device):
+    """
+    Generate Class Activation Map for a model and image.
+    This is a simple implementation and may need adjustment for different models.
+    
+    Args:
+        model: Trained model
+        image: Input image tensor [1, 1, H, W]
+        target_class: Target class index
+        device: Device to run model on
+    
+    Returns:
+        cam: Class activation map
+        output: Model output
+    """
+    # Set model to evaluation mode
+    model.eval()
+    
+    # First, remove any existing hooks to avoid conflicts
+    for module in model.modules():
+        if hasattr(module, '_forward_hooks'):
+            module._forward_hooks.clear()
+    
+    # Move image to device
+    image = image.to(device)
+    
+    # Forward pass
+    features = []
+    
+    def hook_fn(module, input, output):
+        features.append(output.detach())
+    
+    # Find and register hook on the last convolutional layer
+    hook_handle = None
+    
+    if False:
+        hook_handle = model.conv3.register_forward_hook(hook_fn)
+    else:
+        # Generic hook on the last conv layer (may need adjustment)
+        last_conv = None
+        for module in model.modules():
+            if isinstance(module, nn.Conv2d):
+                last_conv = module
+        
+        if last_conv is not None:
+            hook_handle = last_conv.register_forward_hook(hook_fn)
+    
+    # Forward pass
+    with torch.no_grad():
+        output = model(image)
+    
+    # Remove the hook after use
+    if hook_handle is not None:
+        hook_handle.remove()
+    
+    # Get weights for the target class
+    fc_weights = model.fc.weight[target_class].cpu().data.numpy()
+    
+    # Get feature maps from the last convolutional layer
+    feature_maps = features[0].cpu().data.numpy().squeeze()
+    
+    # Use the first C weights where C is the number of channels
+    num_channels = feature_maps.shape[0]
+    
+    # Option 1: Use a slice of weights if we have more weights than channels
+    if len(fc_weights) > num_channels:
+        channel_weights = fc_weights[:num_channels]
+    # Option 2: If weights are exactly for reshaping (which they should be)
+    elif len(fc_weights) == num_channels * feature_maps.shape[1] * feature_maps.shape[2]:
+        weights_reshaped = fc_weights.reshape(num_channels, feature_maps.shape[1], feature_maps.shape[2])
+        channel_weights = weights_reshaped.mean(axis=(1, 2))
+    # Option 3: Fallback - use equal weights
+    else:
+        channel_weights = np.ones(num_channels)
+    
+    # Calculate the weighted sum of feature maps
+    cam = np.zeros(feature_maps.shape[1:], dtype=np.float32)
+    for i, w in enumerate(channel_weights):
+        cam += w * feature_maps[i]
+    
+    # Apply ReLU to the CAM
+    cam = np.maximum(cam, 0)
+    
+    # Normalize CAM
+    cam = (cam - np.min(cam)) / (np.max(cam) - np.min(cam) + 1e-8)  # Added epsilon to avoid division by zero
+    
+
+    cam = resize(cam, (28, 28))
+    
+    return cam, output
+
+
+import matplotlib.pyplot as plt
+import torch
+import random
+
+import random
+
+def show_cam(model, data_loader, device, class_names, num_images=5):
+    """
+    Show Class Activation Maps for a few images.
+    
+    Args:
+        model: Trained model
+        data_loader: DataLoader with data
+        device: Device to run model on
+        class_names: List of class names
+        num_images: Number of images to show
+    """
+    # Get a list of all the images and labels from the data_loader
+    all_images = []
+    all_labels = []
+    
+    for images, labels in data_loader:
+        all_images.append(images)
+        all_labels.append(labels)
+    
+    # Stack images and labels into single tensors
+    all_images = torch.cat(all_images, dim=0)
+    all_labels = torch.cat(all_labels, dim=0)
+
+    # Randomly select `num_images` indices from the dataset
+    random_indices = random.sample(range(0, len(all_images)), num_images)
+    print(f"Random indices: {random_indices}, len(images): {len(all_images)}")
+    
+    plt.figure(figsize=(15, num_images * 3))
+    
+    for i, idx in enumerate(random_indices):
+        # Correctly select a single image using idx
+        image = all_images[idx]
+        label = all_labels[idx].item()
+        
+        # Generate CAM
+        cam, output = generate_cam(model, image.unsqueeze(0), label, device)
+        
+        # Get predicted class
+        _, pred = torch.max(output, 1)
+        pred = pred.item()
+        
+        # Plot original image - handling RGB properly
+        plt.subplot(num_images, 3, i*3 + 1)
+        img = image.cpu().numpy().transpose(1, 2, 0)  # Convert (C, H, W) -> (H, W, C)
+        
+        # Rescale image to [0, 1] if needed, as images are typically in [-1, 1] range after normalization
+        img = (img * 0.5) + 0.5  # Rescale to [0, 1]
+        
+        plt.imshow(img)  # No need for a colormap for RGB images
+        plt.title(f"Original Image\nTrue: {class_names[label]}")
+        plt.axis('off')
+        
+        # Plot CAM
+        plt.subplot(num_images, 3, i*3 + 2)
+        plt.imshow(cam, cmap='jet')
+        plt.title("Class Activation Map")
+        plt.axis('off')
+        
+        # Plot overlay
+        plt.subplot(num_images, 3, i*3 + 3)
+        plt.imshow(img)  # Use the RGB image
+        plt.imshow(cam, alpha=0.5, cmap='jet')  # Overlay CAM with alpha blending
+        plt.title(f"Overlay\nPred: {class_names[pred]}")
+        plt.axis('off')
+    
+    plt.suptitle(f"Class Activation Maps for {model.__class__.__name__}", fontsize=16)
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.90)
+    plt.show()
