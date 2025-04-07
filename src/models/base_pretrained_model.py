@@ -6,6 +6,7 @@ import copy
 import time
 from tqdm import tqdm
 import torchvision.models as models
+from .custom_model import BaselineCNN
 
 class BasePretrainedModel(nn.Module):
     """
@@ -44,6 +45,10 @@ class BasePretrainedModel(nn.Module):
             # Replace the final classifier
             num_ftrs = model.classifier.in_features
             model.classifier = nn.Linear(num_ftrs, self.num_classes)
+            
+        elif self.model_name == "baselineCNN":
+            model = BaselineCNN(self.num_classes)
+
             
         return model
     

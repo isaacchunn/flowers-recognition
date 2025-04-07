@@ -312,9 +312,9 @@ def get_features(model, inputs, device=None):
     # Move to appropriate device
     feature_extractor = feature_extractor.to(device)
     feature_extractor.eval()  # Set to evaluation mode
-    
+
     # Remove the final fully connected layer
-    if hasattr(feature_extractor, 'fc'):
+    if hasattr(feature_extractor, 'fc') or hasattr(feature_extractor, 'fc2'):    
         # For ResNet
         feature_extractor.fc = nn.Identity()
     elif hasattr(feature_extractor, 'classifier'):
