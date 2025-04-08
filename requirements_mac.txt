@@ -10,3 +10,5 @@ torchsummary==1.5.1
 setuptools==65.5.0
 ipywidgets
 scipy
+scikit-learn
+seaborn

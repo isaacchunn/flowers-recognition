@@ -10,3 +10,5 @@ pandas==2.2.3
 torchsummary==1.5.1
 ipywidgets
 scipy
+scikit-learn
+seaborn

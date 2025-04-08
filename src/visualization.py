@@ -5,14 +5,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import copy
 import random
-from tqdm import tqdm
 from torchvision import transforms
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
 
 def denormalize(img_tensor, normalize_mean=[0.485, 0.456, 0.406], normalize_std=[0.229, 0.224, 0.225]):
     """
     Reverse the normalization process to convert tensors back to displayable images
     """
-    img = img_tensor.numpy().transpose((1, 2, 0))
+    img = img_tensor.numpy().transpose((1, 2, 0)) 
     mean = np.array(normalize_mean)
     std = np.array(normalize_std)
     img = std * img + mean
@@ -137,7 +138,6 @@ def visualize_dataset_samples(dataset, class_names, num_samples=5, save_path=Non
         print(f"Visualization saved to {save_path}")
     else:
         plt.show()
-
 
 def visualize_misclassifications_with_closest_images(model, data_loader, class_names, dataset, num_samples=5, device=None):
     """
@@ -312,9 +312,9 @@ def get_features(model, inputs, device=None):
     # Move to appropriate device
     feature_extractor = feature_extractor.to(device)
     feature_extractor.eval()  # Set to evaluation mode
-    
+
     # Remove the final fully connected layer
-    if hasattr(feature_extractor, 'fc'):
+    if hasattr(feature_extractor, 'fc') or hasattr(feature_extractor, 'fc2'):    
         # For ResNet
         feature_extractor.fc = nn.Identity()
     elif hasattr(feature_extractor, 'classifier'):
@@ -413,3 +413,109 @@ def find_closest_image(model, dataset, target_features, target_class, device=Non
             closest_img = batch_imgs[batch_max_idx].cpu()  # Move back to CPU for storing
     
     return closest_img
+
+def plot_training_history(history, save_path=None):
+    """
+    Plot training and validation loss and accuracy curves.
+    
+    Args:
+        history (dict): Dictionary containing training metrics with keys:
+                       'train_loss', 'val_loss', 'train_acc', 'val_acc'
+        save_path (str, optional): Path to save the figure. If None, the figure is only displayed.
+    
+    Returns:
+        None: Displays the plot and optionally saves it to the specified path.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Plot loss
+    ax1.plot(history['train_loss'], label='Training Loss')
+    ax1.plot(history['val_loss'], label='Validation Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True, linestyle='--', alpha=0.7)
+    
+    # Plot accuracy
+    ax2.plot(history['train_acc'], label='Training Accuracy')
+    ax2.plot(history['val_acc'], label='Validation Accuracy')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.legend()
+    ax2.grid(True, linestyle='--', alpha=0.7)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {save_path}")
+    
+    plt.show()
+    
+def plot_top_n_confusion_matrix(y_true, y_pred, class_names=None, top_n=10, figsize=(12, 8)):
+    """
+    Plot confusion matrix for the top N most frequent classes.
+    
+    Args:
+        y_true: True labels
+        y_pred: Predicted labels
+        class_names: List of class names
+        top_n: Number of top features to plot (default is 10)
+        figsize: Size of the plot
+    """
+    # Get the confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    # Sum each row to get the total occurrences of each class
+    class_totals = np.sum(cm, axis=1)
+    
+    # Get indices of the top N most frequent classes based on total occurrences
+    top_n_indices = np.argsort(class_totals)[-top_n:][::-1]  # Sort and get top n classes
+    
+    # Filter the confusion matrix for the top N classes
+    cm_top_n = cm[top_n_indices, :][:, top_n_indices]
+    
+    # Get the class names for the top N classes
+    top_n_class_names = [class_names[i] for i in top_n_indices]
+    
+    # Plot the confusion matrix for the top N classes
+    plt.figure(figsize=figsize)
+    ax = sns.heatmap(cm_top_n, annot=True, fmt="d", cmap="Blues", xticklabels=top_n_class_names, yticklabels=top_n_class_names, 
+                     cbar_kws={'label': 'Number of Predictions'}, annot_kws={"size": 10})
+    
+    # Rotate axis labels for readability
+    plt.xticks(rotation=90)
+    plt.yticks(rotation=0)
+    
+    # Set labels and title
+    plt.xlabel('Predicted Labels')
+    plt.ylabel('True Labels')
+    plt.title(f'Confusion Matrix - Top {top_n} Classes')
+    
+    # Tight layout to avoid clipping
+    plt.tight_layout()
+    plt.show()
+
+    # Filter the true and predicted labels to include only the top N classes
+    # Create masks for the top N classes
+    top_n_mask = np.isin(y_true, top_n_indices)
+    
+    # Filter labels
+    y_true_filtered = np.array(y_true)[top_n_mask]
+    y_pred_filtered = np.array(y_pred)[top_n_mask]
+    
+    # Map the class indices to a range from 0 to top_n-1 for the classification report
+    index_map = {idx: i for i, idx in enumerate(top_n_indices)}
+    y_true_mapped = np.array([index_map[idx] for idx in y_true_filtered])
+    y_pred_mapped = np.array([index_map.get(idx, -1) for idx in y_pred_filtered])
+    
+    # Filter out any predictions that map to -1 (i.e., predictions not in top_n_indices)
+    valid_indices = y_pred_mapped != -1
+    y_true_mapped = y_true_mapped[valid_indices]
+    y_pred_mapped = y_pred_mapped[valid_indices]
+    
+    # Print classification report for top N classes
+    print(f"Classification Report - Top {top_n} Classes:")
+    print(classification_report(y_true_mapped, y_pred_mapped, target_names=top_n_class_names))

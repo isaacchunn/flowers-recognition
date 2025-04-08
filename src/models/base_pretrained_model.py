@@ -1,10 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-import copy
-import time
-from tqdm import tqdm
 import torchvision.models as models
 
 class BasePretrainedModel(nn.Module):
@@ -19,7 +14,6 @@ class BasePretrainedModel(nn.Module):
         # Initialize the model
         self.model = self._initialize_model()
         self.model = self.model.to(device)  # Move to GPU if available
-
     
     def _initialize_model(self):
         """
