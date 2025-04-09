@@ -4,8 +4,10 @@ import torchvision.models as models
 
 
 class VisualPromptTransformer(nn.Module):
-    def __init__(self, num_prompts=10, embedding_dim=768, num_classes=10):
+    def __init__(self, model_name = "vit_b_16", num_prompts=10, embedding_dim=768, num_classes=10):
         super().__init__()
+    
+        self.model_name = model_name
         
         # Load pre-trained ViT model
         self.vit = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
