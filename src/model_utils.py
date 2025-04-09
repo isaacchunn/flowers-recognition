@@ -41,7 +41,7 @@ def save_model_and_history(model, history, save_dir, model_name):
 
 def load_model_and_history(model_class, save_dir, model_name, device, num_classes=102):
     """
-    Load a saved model and its training history
+    Load a saved model and its training data (history and time taken)
     
     Args:
         model_class: The model class (e.g., BaseCNN)
