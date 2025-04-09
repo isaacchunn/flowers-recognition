@@ -6,18 +6,16 @@ class BasePretrainedModel(nn.Module):
     """
     Class for the baseline model using a pretrained architecture
     """
-    def __init__(self, num_classes, freeze_layers=False, model_name='resnet50'):
+    def __init__(self, num_classes, freeze_strategy="layer4", model_name='resnet50'):
         super().__init__()
         self.num_classes = num_classes
         self.model_name = model_name
-        self.freeze_layers = freeze_layers
-        
+   
         # Initialize the model
         self.model = self._initialize_model()
         
-         # Apply freezing if requested
-        if freeze_layers:
-            self._freeze_layers()
+        # Apply initial freezing strategy
+        self._apply_freeze_strategy(freeze_strategy)
     
     def _initialize_model(self):
         """
@@ -38,17 +36,51 @@ class BasePretrainedModel(nn.Module):
             
         return model
     
-    def _freeze_layers(self):
-        """
-        Freeze all layers except the final fully connected layer
-        """
-        # Freeze all layers
-        for param in self.model.parameters():
-            param.requires_grad = False
+    def _apply_freeze_strategy(self, strategy):
+            """
+            Apply different freezing strategies
             
-        # Unfreeze the final fully connected layer
-        for param in self.model.fc.parameters():
-            param.requires_grad = True
+            Args:
+                strategy: String indicating which parts to freeze
+                    'all': Freeze all layers except the final FC
+                    'none': Don't freeze any layers (full fine-tuning)
+                    'partial': Freeze early layers, unfreeze later convolutional layers
+                    'layer4': Only unfreeze the last convolutional block (layer4) and FC
+                    'layer3+': Unfreeze layer3, layer4 and FC
+            """
+            # First, set requires_grad=True for all parameters (default)
+            for param in self.model.parameters():
+                param.requires_grad = True
+                
+            if strategy == 'all':
+                # Freeze all layers except FC
+                for name, param in self.model.named_parameters():
+                    if 'fc' not in name:
+                        param.requires_grad = False
+                        
+            elif strategy == 'none':
+                # Don't freeze any layers (all parameters already have requires_grad=True)
+                pass
+                
+            elif strategy == 'partial':
+                # Freeze early convolutional blocks
+                for name, param in self.model.named_parameters():
+                    if any(x in name for x in ['layer1', 'layer2', 'conv1', 'bn1']):
+                        param.requires_grad = False
+                        
+            elif strategy == 'layer4':
+                # Freeze all except last conv block and FC
+                for name, param in self.model.named_parameters():
+                    if not any(x in name for x in ['layer4', 'fc']):
+                        param.requires_grad = False
+                        
+            elif strategy == 'layer3+':
+                # Freeze only early layers
+                for name, param in self.model.named_parameters():
+                    if any(x in name for x in ['layer1', 'layer2', 'conv1', 'bn1']):
+                        param.requires_grad = False
+            else:
+                raise ValueError(f"Freeze strategy '{strategy}' not recognized")
     
     def forward(self, x):
         """

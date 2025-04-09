@@ -519,3 +519,92 @@ def plot_top_n_confusion_matrix(y_true, y_pred, class_names=None, top_n=10, figs
     # Print classification report for top N classes
     print(f"Classification Report - Top {top_n} Classes:")
     print(classification_report(y_true_mapped, y_pred_mapped, target_names=top_n_class_names))
+
+
+def plot_model_comparison(model_names, accuracies, losses, figsize=(16, 7), 
+                          acc_color='skyblue', loss_color='salmon', 
+                          save_path=None):
+    """
+    Create separate bar graphs for model accuracy and loss comparison.
+    
+    Parameters:
+    -----------
+    model_names : list
+        List of model names to display on x-axis
+    accuracies : list
+        List of accuracy values corresponding to each model (can be tensors)
+    losses : list
+        List of loss values corresponding to each model (can be tensors)
+    figsize : tuple, optional
+        Figure size as (width, height) in inches, default (16, 7)
+    acc_color : str, optional
+        Color for accuracy bars, default 'skyblue'
+    loss_color : str, optional
+        Color for loss bars, default 'salmon'
+    save_path : str, optional
+        If provided, saves the figure to this path, default None
+    
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The created figure object
+    """
+    # Convert tensors to numpy arrays if needed
+    acc_values = []
+    for acc in accuracies:
+        if isinstance(acc, torch.Tensor):
+            acc_values.append(acc.detach().cpu().numpy())
+        else:
+            acc_values.append(acc)
+    
+    loss_values = []
+    for loss in losses:
+        if isinstance(loss, torch.Tensor):
+            loss_values.append(loss.detach().cpu().numpy())
+        else:
+            loss_values.append(loss)
+    
+    # Create a figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+    
+    # Bar width
+    bar_width = 0.6
+    x = np.arange(len(model_names))
+    
+    # Plot test accuracy as bars
+    acc_bars = ax1.bar(x, acc_values, bar_width, color=acc_color)
+    ax1.set_ylabel('Accuracy', fontsize=12)
+    ax1.set_ylim(0, 1)  # Accuracy range from 0 to 1
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(model_names, fontsize=12)
+    ax1.set_title('Test Accuracy by Model', fontsize=14, fontweight='bold')
+    
+    # Annotate accuracy bars
+    for bar in acc_bars:
+        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02, 
+                 f'{bar.get_height():.2f}', ha='center', va='bottom', fontsize=10)
+    
+    # Plot test loss as bars
+    loss_bars = ax2.bar(x, loss_values, bar_width, color=loss_color)
+    ax2.set_ylabel('Loss', fontsize=12)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(model_names, fontsize=12)
+    ax2.set_title('Test Loss by Model', fontsize=14, fontweight='bold')
+    
+    # Annotate loss bars
+    for bar in loss_bars:
+        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1, 
+                 f'{bar.get_height():.2f}', ha='center', va='bottom', fontsize=10)
+    
+    # Add grid for better readability
+    ax1.grid(axis='y', linestyle='--', alpha=0.7)
+    ax2.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Save figure if path is provided
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+    plt.show()

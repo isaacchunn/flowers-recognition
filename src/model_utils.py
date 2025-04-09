@@ -69,7 +69,7 @@ def load_model_and_history(model_class, save_dir, model_name, device, num_classe
             history = json.load(f)
     
     # Initialize model
-    model = model_class(num_classes=num_classes)
+    model = model_class(model_name=model_name, num_classes=num_classes)
     
     # Load state dict with appropriate device mapping
     model.load_state_dict(torch.load(model_path, map_location=device))
