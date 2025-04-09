@@ -1,55 +1,102 @@
 import torch
 import torch.nn as nn
-import torchvision.models as models
-
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+import torchvision.transforms as transforms
+from torchvision.datasets import ImageFolder
+import timm
+from tqdm import tqdm
+import numpy as np
 
 class VisualPromptTransformer(nn.Module):
-    def __init__(self, model_name = "vit_b_16", num_prompts=10, embedding_dim=768, num_classes=10):
+    def __init__(self, 
+                 model_name='vit_b_16', 
+                 num_classes=102, 
+                 prompt_length=5,
+                 prompt_dropout=0.0,
+                 frozen=True):
+        """
+        Visual Prompt Tuning for Vision Transformer
+        Args:
+            model_name: Name of the ViT model (default: 'vit_base_patch16_224')
+            num_classes: Number of output classes
+            prompt_length: Number of prompt tokens to add
+            prompt_dropout: Dropout probability for prompt tokens
+            frozen: Whether to freeze the pre-trained model
+        """
+        if model_name == 'vit_b_16':
+            model_name = 'vit_base_patch16_224'
         super().__init__()
-    
-        self.model_name = model_name
         
-        # Load pre-trained ViT model
-        self.vit = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+        # Load pretrained ViT model
+        self.model = timm.create_model(model_name, pretrained=True)
         
-        # Freeze all parameters of the model
-        for param in self.vit.parameters():
-            param.requires_grad = False
+        # Get embedding dimension from model
+        embed_dim = self.model.embed_dim
         
-        # Create learnable prompt tokens
-        self.prompt_tokens = nn.Parameter(torch.zeros(1, num_prompts, embedding_dim))
-        # Initialize with random values
+        # Initialize prompt tokens (learnable parameters)
+        self.prompt_tokens = nn.Parameter(torch.zeros(1, prompt_length, embed_dim))
+        # Initialize with random values (better than zeros)
         nn.init.normal_(self.prompt_tokens, std=0.02)
         
-        # Replace the classification head for the new task
-        self.vit.heads = nn.Linear(embedding_dim, num_classes)
-        # Only unfreeze the classification head
-        for param in self.vit.heads.parameters():
-            param.requires_grad = True
-            
+        self.prompt_dropout = nn.Dropout(prompt_dropout)
+        self.prompt_length = prompt_length
+        
+        # Replace the head with a new one for our task
+        self.model.head = nn.Linear(embed_dim, num_classes)
+        
+        # Freeze parameters of the original model if required
+        if frozen:
+            for param in self.model.parameters():
+                param.requires_grad = False
+            # Unfreeze the head (classification layer)
+            for param in self.model.head.parameters():
+                param.requires_grad = True
+    
     def forward(self, x):
         # Get batch size
-        batch_size = x.shape[0]
+        B = x.shape[0]
         
-        # The original ViT processes the input through a patch embedding layer
-        # and adds a class token at the beginning
-        x = self.vit.patch_embed(x)
-        cls_token = self.vit.class_token.expand(batch_size, -1, -1)
+        # Extract patch embeddings and position embeddings from the model
+        x = self.model.patch_embed(x)  # (B, N, D)
         
-        # Expand prompts to batch size and concatenate with input sequence
-        prompts = self.prompt_tokens.expand(batch_size, -1, -1)
-        x = torch.cat((cls_token, prompts, x), dim=1)
+        # Add position embeddings to patch embeddings
+        cls_token = self.model.cls_token.expand(B, -1, -1)
         
-        # Add position embeddings (we may need to interpolate position embeddings
-        # since we've changed sequence length)
-        if self.vit.pos_embed is not None:
-            pos_embed = self.vit.interpolate_pos_encoding(x, self.vit.pos_embed)
-            x = x + pos_embed
-            
-        # Pass through the transformer encoder
-        x = self.vit.encoder(x)
+        # Expand prompt tokens to batch size and apply dropout
+        prompt_tokens = self.prompt_tokens.expand(B, -1, -1)
+        prompt_tokens = self.prompt_dropout(prompt_tokens)
         
-        # Classification based on class token
+        # Concatenate [CLS] token, prompt tokens, and patch embeddings
+        x = torch.cat([cls_token, prompt_tokens, x], dim=1)
+        
+        # Add positional embeddings (need to handle the extra prompt tokens)
+        pos_embed = self.model.pos_embed
+        
+        # For the [CLS] token and patch embeddings, we use the original positional embeddings
+        cls_pos_embed = pos_embed[:, 0:1, :]
+        patch_pos_embed = pos_embed[:, 1:, :]
+        
+        # For prompt tokens, we don't add positional embeddings (learnable prompts)
+        x = torch.cat([
+            cls_pos_embed + x[:, 0:1, :],  # [CLS] token + its pos embedding
+            x[:, 1:self.prompt_length+1, :],  # Prompt tokens (no pos embedding)
+            patch_pos_embed + x[:, self.prompt_length+1:, :]  # Patch embeddings + pos embeddings
+        ], dim=1)
+        
+        # Continue with the rest of the ViT model
+        x = self.model.pos_drop(x)
+        
+        # Apply transformer blocks
+        for blk in self.model.blocks:
+            x = blk(x)
+        
+        x = self.model.norm(x)
+        
+        # Take [CLS] token output for classification
         x = x[:, 0]
-        x = self.vit.heads(x)
+        
+        # Apply classification head
+        x = self.model.head(x)
+        
         return x
