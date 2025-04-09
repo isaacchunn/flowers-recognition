@@ -6,7 +6,7 @@ class BasePretrainedModel(nn.Module):
     """
     Class for the baseline model using a pretrained architecture
     """
-    def __init__(self, num_classes, device, freeze_layers=False, model_name='resnet50'):
+    def __init__(self, num_classes, freeze_layers=False, model_name='resnet50'):
         super().__init__()
         self.num_classes = num_classes
         self.model_name = model_name
@@ -18,8 +18,6 @@ class BasePretrainedModel(nn.Module):
          # Apply freezing if requested
         if freeze_layers:
             self._freeze_layers()
-            
-        self.model = self.model.to(device)  # Move to GPU if available
     
     def _initialize_model(self):
         """
