@@ -8,6 +8,8 @@ import random
 from torchvision import transforms
 from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
+import os
+from PIL import Image
 
 def denormalize(img_tensor, normalize_mean=[0.485, 0.456, 0.406], normalize_std=[0.229, 0.224, 0.225]):
     """
@@ -139,7 +141,7 @@ def visualize_dataset_samples(dataset, class_names, num_samples=5, save_path=Non
     else:
         plt.show()
 
-def visualize_misclassifications_with_closest_images(model, data_loader, class_names, dataset, num_samples=5, device=None):
+def visualize_misclassifications_with_closest_images(model, data_loader, class_names, dataset, num_samples=5, device=None, skip_if_exists=True):
     """
     Find and visualize misclassified images, along with the closest examples 
     of both the correct class and predicted class, ensuring diversity of classes
@@ -152,8 +154,18 @@ def visualize_misclassifications_with_closest_images(model, data_loader, class_n
         num_samples: Number of misclassifications to display
         device: Device to run computations on (inferred from model if None)
     """
-    import torch.nn.functional as F
-    import matplotlib.pyplot as plt
+    image_path = f"output/diags/misclassification_analysis_{model.model_name}.png"
+    # If exist, load the image from directory and show it
+    # Check if the image already exists
+    if skip_if_exists and os.path.exists(image_path):
+        # Load and display the existing image
+        img = Image.open(image_path)
+        plt.figure(figsize=(12, 10))
+        plt.imshow(img)
+        plt.axis('off')
+        plt.show()
+        print(f"Loaded existing image: {image_path}")
+        return
     
     # Determine device if not provided
     if device is None:
@@ -278,7 +290,8 @@ def visualize_misclassifications_with_closest_images(model, data_loader, class_n
         axes[2, i].axis('off')
     
     plt.tight_layout()
-    plt.suptitle("Misclassification Analysis with Most Similar Images", y=1.02, fontsize=16)
+    plt.suptitle(f"Misclassification Analysis with Most Similar Images {(model.model_name)}", y=1.02, fontsize=16)
+    plt.savefig(image_path, dpi=300, bbox_inches='tight')
     plt.show()
     
     # Return the diversity stats for reference
@@ -306,19 +319,21 @@ def get_features(model, inputs, device=None):
     # Create feature extractor based on model structure
     if hasattr(model, 'model'):
         feature_extractor = copy.deepcopy(model.model)
+    elif hasattr(model, 'vit'):
+        feature_extractor = copy.deepcopy(model.vit)
     else:
         feature_extractor = copy.deepcopy(model)
         
     # Move to appropriate device
     feature_extractor = feature_extractor.to(device)
     feature_extractor.eval()  # Set to evaluation mode
+    
 
     # Remove the final fully connected layer
     if hasattr(feature_extractor, 'fc') or hasattr(feature_extractor, 'fc2'):    
         # For ResNet
         feature_extractor.fc = nn.Identity()
     elif hasattr(feature_extractor, 'classifier'):
-        # For VGG, DenseNet, etc.
         if isinstance(feature_extractor.classifier, nn.Sequential):
             feature_extractor.classifier = nn.Sequential(
                 *list(feature_extractor.classifier.children())[:-1]

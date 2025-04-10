@@ -12,3 +12,4 @@ ipywidgets
 scipy
 scikit-learn
 seaborn
+timm
