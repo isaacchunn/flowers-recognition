@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torchvision.ops as ops
 
@@ -36,7 +37,7 @@ class DeformableCNN(nn.Module):
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+            nn.MaxPool2d(kernel_size=2, stride=2),
         )
         
         self.conv3_1 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
@@ -44,7 +45,8 @@ class DeformableCNN(nn.Module):
         self.relu3_1 = nn.ReLU(inplace=True)
         
         # Offset predictor for deformable conv in block3, define it for deformconv2d
-        self.offset3 = nn.Conv2d(256, 2*3*3, kernel_size=3, padding=1)  # 2*k*k offsets
+        self.offset3 = nn.Conv2d(256, 2*3*3, kernel_size=3, padding=1)  # 2*k*k offsets kw, kh is actually 3
+        self.mask3 = nn.Conv2d(256, 3*3, kernel_size=3, padding=1)      # k*k masks
         self.deform_conv3_2 = ops.DeformConv2d(256, 512, kernel_size=3, padding=1)
         self.bn3_2 = nn.BatchNorm2d(512)
         self.relu3_2 = nn.ReLU(inplace=True)
@@ -54,6 +56,7 @@ class DeformableCNN(nn.Module):
         # so that is can capture the complex spatial relationship to hopefully handle objects
         # with rigid structure or varying poses
         self.offset4 = nn.Conv2d(512, 2*3*3, kernel_size=3, padding=1)
+        self.mask4 = nn.Conv2d(512, 3*3, kernel_size=3, padding=1)
         self.deform_conv4 = ops.DeformConv2d(512, 512, kernel_size=3, padding=1)
         self.bn4 = nn.BatchNorm2d(512)
         self.relu4 = nn.ReLU(inplace=True)
@@ -76,23 +79,29 @@ class DeformableCNN(nn.Module):
         x = self.bn3_1(x)
         x = self.relu3_1(x)
         
-        # Compute offsets for deformable conv
+        # Compute offsets and masks for deformable conv
         offset3 = self.offset3(x)
-        # Apply deformable conv
-        x = self.deform_conv3_2(x, offset3)
+        mask3 = torch.sigmoid(self.mask3(x))  # Apply sigmoid to get values in [0,1]
+        
+        # Apply deformable conv with mask
+        x = self.deform_conv3_2(x, offset3, mask3)
         x = self.bn3_2(x)
         x = self.relu3_2(x)
         x = self.pool3(x)
         
-        # Block 4 with deformable conv
+        # Block 4 with deformable conv and compute offset and masks for deformable conv
         offset4 = self.offset4(x)
-        x = self.deform_conv4(x, offset4)
+        mask4 = torch.sigmoid(self.mask4(x))
+        
+        x = self.deform_conv4(x, offset4, mask4)
         x = self.bn4(x)
         x = self.relu4(x)
         x = self.pool4(x)
         
-        # Rest of the network
+        # Block 5
         x = self.block5(x)
+        
+        # Global pooling and classification
         x = self.global_pool(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)

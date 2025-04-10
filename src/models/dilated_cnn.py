@@ -45,27 +45,25 @@ class DilatedCNN(nn.Module):
         We slowly increase the number of channels to get deeper feature extraction
         Add dilation=2 to expand the receptive field
         from 3x3 to 5x5 effective size without additional parameters.
-        Increase dilation rate to 4 to expand the receptive field again
+        Increase dilation rate to 2 to expand the receptive field again
         """
         self.block3 = nn.Sequential(
-            nn.Conv2d(128, 256, kernel_size=3, padding=1, dilation=2),
+            nn.Conv2d(128, 256, kernel_size=3, padding=1, dilation=1),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
-            nn.Conv2d(256, 512, kernel_size=3, padding=1, dilation=4),
+            nn.Conv2d(256, 512, kernel_size=3, padding=2, dilation=2),
             nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)
+            nn.MaxPool2d(kernel_size=2, stride=2),
         )
         
         """
         This block is used to further refine the features extracted in the previous block, with a single convolutional layer 
         and max pooling to reduce the spatial dimension to 14x14
         
-        Using huge dilation rate of 6 to capture very wide spatial relationships and global context,
-        to model complex patterns
         """
         self.block4 = nn.Sequential(
-            nn.Conv2d(512, 512, kernel_size=3, padding=4, dilation=4),  # Dilation=4
+            nn.Conv2d(512, 512, kernel_size=3, padding=2, dilation=2),  # Dilation=2
             nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
