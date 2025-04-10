@@ -39,7 +39,7 @@ def save_model_and_history(model, history, save_dir, model_name):
     
     return model_path, history_path
 
-def load_model_and_history(model_class, save_dir, model_name, device, num_classes=102):
+def load_model_and_history(model_class, save_dir, model_name, device, num_classes=102, **kwargs):
     """
     Load a saved model and its training data (history and time taken)
     
@@ -69,7 +69,7 @@ def load_model_and_history(model_class, save_dir, model_name, device, num_classe
             history = json.load(f)
     
     # Initialize model
-    model = model_class(model_name=model_name, num_classes=num_classes)
+    model = model_class(model_name=model_name, num_classes=num_classes, **kwargs)
     
     # Load state dict with appropriate device mapping
     model.load_state_dict(torch.load(model_path, map_location=device))

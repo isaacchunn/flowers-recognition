@@ -47,11 +47,11 @@ class LightweightCNN(nn.Module):
         We slowly increase the number of channels to get deeper feature extraction
         """
         self.block3 = nn.Sequential(
-            DepthwiseSeparableConv(128, 192, kernel_size=3, padding=1),
-            nn.BatchNorm2d(192),
-            nn.ReLU(inplace=True),
-            DepthwiseSeparableConv(192, 256, kernel_size=3, padding=1),
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            DepthwiseSeparableConv(256, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
@@ -60,8 +60,8 @@ class LightweightCNN(nn.Module):
         This block is used to further refine the features extracted in the previous block, with a single convolutional layer and max pooling to reduce the spatial dimension to 14x14
         """
         self.block4 = nn.Sequential(
-            DepthwiseSeparableConv(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            DepthwiseSeparableConv(512, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
@@ -74,14 +74,8 @@ class LightweightCNN(nn.Module):
         # Global pooling to reduce the spatial dimensions to 1x1
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # Classification layers with intermediate FC
-        self.classifier = nn.Sequential(
-            nn.Linear(256, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes)
-        )
+        # Classification layer to map the features to the number of classes
+        self.classifier = nn.Linear(512, num_classes)
 
     def forward(self, x):
         # Apply each block sequentially

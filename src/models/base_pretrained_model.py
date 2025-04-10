@@ -48,7 +48,7 @@ class BasePretrainedModel(nn.Module):
                     'layer4': Only unfreeze the last convolutional block (layer4) and FC
                     'layer3+': Unfreeze layer3, layer4 and FC
             """
-            # First, set requires_grad=True for all parameters (default)
+            # First, set requires_grad=True for all parameters
             for param in self.model.parameters():
                 param.requires_grad = True
                 
