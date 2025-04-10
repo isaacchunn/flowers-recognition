@@ -10,7 +10,7 @@ class BasePretrainedModel(nn.Module):
         super().__init__()
         self.num_classes = num_classes
         self.model_name = model_name
-   
+
         # Initialize the model
         self.model = self._initialize_model()
         
