@@ -7,6 +7,60 @@ import random
 import pandas as pd
 import os
 
+class MixUpTransform:
+    """
+    MixUp data augmentation.
+
+    This technique creates virtual training examples by linearly interpolating 
+    between pairs of images and their labels.
+
+    Reference:
+        Zhang, H., Cisse, M., Dauphin, Y. N., & Lopez-Paz, D. (2017).
+        mixup: Beyond Empirical Risk Minimization.
+    """
+
+    def __init__(self, alpha: float = 0.2):
+        """
+        Initialize the MixUp transformation.
+
+        Args:
+            alpha (float): Hyperparameter for the Beta distribution.
+                        Higher values mean more mixing.
+        """
+        self.alpha = alpha
+
+    def __call__(self, batch):
+        """
+        Apply MixUp to a batch of data.
+
+        Args:
+            batch (Tuple): A tuple of (inputs, labels)
+                - inputs: Tensor of shape [batch_size, channels, height, width]
+                - labels: Tensor of shape [batch_size] or [batch_size, num_classes]
+
+        Returns:
+            Tuple containing:
+                - mixed_inputs: Tensor of mixed input images
+                - labels: Original labels
+                - shuffled_labels: Labels from the permuted batch
+                - lam: Lambda value used for mixing
+        """
+        inputs, labels = batch
+        batch_size = inputs.size(0)
+
+        # Sample lambda from the Beta distribution
+        lam = np.random.beta(self.alpha, self.alpha) if self.alpha > 0 else 1.0
+
+        # Randomly permute the batch
+        index = torch.randperm(batch_size).to(inputs.device)
+
+        # Mix the inputs and labels using lambda
+        mixed_inputs = lam * inputs + (1 - lam) * inputs[index]
+
+        # Return mixed inputs and both sets of labels for MixUp loss computation
+        return mixed_inputs, labels, labels[index], lam
+
+
 def set_seeds(seed=42):
     """Set seeds for reproducibility"""
     torch.manual_seed(seed)

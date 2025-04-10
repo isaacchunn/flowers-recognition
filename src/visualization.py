@@ -10,6 +10,7 @@ from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
 import os
 from PIL import Image
+import matplotlib.colors as mcolors
 
 def denormalize(img_tensor, normalize_mean=[0.485, 0.456, 0.406], normalize_std=[0.229, 0.224, 0.225]):
     """
@@ -623,3 +624,113 @@ def plot_model_comparison(model_names, accuracies, losses, figsize=(16, 7),
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         
     plt.show()
+    
+def plot_comprehensive_model_comparison(df, figsize=(18, 10), save_path=None):
+    """
+    Create a comprehensive visualization comparing models on accuracy, loss, and training time.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame with columns 'Model Name', 'Accuracy', 'Loss', 'Training Time (s)'
+    figsize : tuple, optional
+        Figure size as (width, height) in inches
+    save_path : str, optional
+        If provided, saves the figure to this path
+    """
+    # Set the style
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    # Sort by accuracy for better visualization
+    df = df.sort_values('Accuracy', ascending=False)
+    
+    # Create a color palette for different model types
+    colors = list(mcolors.TABLEAU_COLORS.values())
+    
+    # Create figure with three subplots
+    fig = plt.figure(figsize=figsize, dpi=100)
+    gs = fig.add_gridspec(2, 4, height_ratios=[1, 1.5])
+    
+    # Add a title to the entire figure
+    fig.suptitle('Model Comparison on Oxford Flowers Dataset', fontsize=20, fontweight='bold', y=0.98)
+    
+    # Create subplots
+    ax1 = fig.add_subplot(gs[0, :2])  # Accuracy bars
+    ax2 = fig.add_subplot(gs[0, 2:])  # Loss bars
+    ax3 = fig.add_subplot(gs[1, :])   # Combined scatter plot
+    
+    # 1. Bar chart for Accuracy
+    bars = ax1.bar(df['Model Name'], df['Accuracy'], color=colors[:len(df)], 
+                   edgecolor='black', linewidth=1, alpha=0.8)
+    ax1.set_ylabel('Accuracy', fontsize=14, fontweight='bold')
+    ax1.set_title('Model Accuracy', fontsize=16, pad=10)
+    ax1.set_ylim(0, max(df['Accuracy']) * 1.15)  # Add some headroom
+    ax1.tick_params(axis='x', rotation=45, labelsize=10)
+    
+    # Add value labels to accuracy bars
+    for bar in bars:
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                 f'{height:.3f}', ha='center', va='bottom', fontsize=9, 
+                 fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", 
+                                              fc="white", ec="black", alpha=0.8))
+    
+    # 2. Bar chart for Loss
+    bars = ax2.bar(df['Model Name'], df['Loss'], color=colors[:len(df)], 
+                   edgecolor='black', linewidth=1, alpha=0.8)
+    ax2.set_ylabel('Loss', fontsize=14, fontweight='bold')
+    ax2.set_title('Model Loss', fontsize=16, pad=10)
+    ax2.set_ylim(0, max(df['Loss']) * 1.15)  # Add some headroom
+    ax2.tick_params(axis='x', rotation=45, labelsize=10)
+    
+    # Add value labels to loss bars
+    for bar in bars:
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                 f'{height:.3f}', ha='center', va='bottom', fontsize=9, 
+                 fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", 
+                                              fc="white", ec="black", alpha=0.8))
+    
+    # 3. Scatter plot: Accuracy vs. Training Time with size representing Loss
+    scatter = ax3.scatter(df['Training Time (s)'], df['Accuracy'], 
+                s=300 / (df['Loss'] + 0.1),  # Inverse of loss for size (larger = better)
+                c=range(len(df)),  # Use index for color to match bar charts
+                cmap=plt.cm.tab10,
+                alpha=0.8, edgecolors='black', linewidth=1)
+    
+    # Add a trend line
+    z = np.polyfit(df['Training Time (s)'], df['Accuracy'], 1)
+    p = np.poly1d(z)
+    ax3.plot(df['Training Time (s)'], p(df['Training Time (s)']), 
+             "r--", alpha=0.7, label=f"Trend: y={z[0]:.2e}x+{z[1]:.2f}")
+    
+    # Add model name labels to scatter points
+    for i, txt in enumerate(df['Model Name']):
+        ax3.annotate(txt, (df['Training Time (s)'].iloc[i], df['Accuracy'].iloc[i]),
+                    xytext=(7, 0), textcoords='offset points', fontsize=9)
+    
+    # Scatter plot formatting
+    ax3.set_xlabel('Training Time (seconds)', fontsize=14, fontweight='bold')
+    ax3.set_ylabel('Accuracy', fontsize=14, fontweight='bold')
+    ax3.set_title('Accuracy vs. Training Time (bubble size represents inverse of loss)', 
+                 fontsize=16, pad=10)
+    
+    # Add legend for the trend line
+    ax3.legend(loc='upper right')
+    
+    # Add gridlines
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    
+    # Add a note about the bubble size
+    ax3.text(0.02, 0.02, "Note: Larger bubbles represent lower loss values", 
+             transform=ax3.transAxes, fontsize=10, style='italic')
+    
+    # Tight layout
+    plt.tight_layout(rect=[0, 0.02, 1, 0.96])
+    
+    # Save the figure if a path is provided
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {save_path}")
+    
+    return fig
