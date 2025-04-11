@@ -11,6 +11,7 @@ import seaborn as sns
 import os
 from PIL import Image
 import matplotlib.colors as mcolors
+from skimage.transform import resize
 
 def denormalize(img_tensor, normalize_mean=[0.485, 0.456, 0.406], normalize_std=[0.229, 0.224, 0.225]):
     """
@@ -734,3 +735,379 @@ def plot_comprehensive_model_comparison(df, figsize=(18, 10), save_path=None):
         print(f"Figure saved to {save_path}")
     
     return fig
+
+import torch
+import torch.nn as nn
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage.transform import resize
+import random
+
+def generate_cam_output(model, image, target_class, device):
+    """
+    This creates a Class Activation Mapping visualization for our custom traditional cnn 
+    and vision transformers implmenetation
+    
+    Parameters:
+    -----------
+    model : torch.nn.Module
+        The model to visualize (either CNN or ViT)
+    image : torch.Tensor
+        Input tensor with shape [1, channels, height, width]
+    target_class : int
+        The class index to visualize
+    device : torch.device
+        The device to perform computation on
+        
+    Returns:
+    --------
+    heatmap : numpy.ndarray
+        The resulting class activation map
+    predictions : torch.Tensor
+        The model's output predictions
+    """
+    model.eval()
+    
+    # Clear any existing hooks
+    for m in model.modules():
+        if hasattr(m, '_forward_hooks'):
+            m._forward_hooks.clear()
+    
+    image = image.to(device)
+    activation_maps = []
+    
+    # Define hook function to capture activations
+    def capture_activations(module, input_tensor, output_tensor):
+        activation_maps.append(output_tensor.detach())
+    
+    # Determine model architecture type
+    is_transformer = (hasattr(model, 'blocks') and hasattr(model, 'norm')) or (hasattr(model, 'vit') and hasattr(model.vit, 'encoder'))
+    hook = None
+    
+    # Register the appropriate hook based on model type
+    if is_transformer:
+        # For transformers, get activations from final attention block
+        if hasattr(model, 'blocks'):
+            hook = model.blocks[-1].register_forward_hook(capture_activations)
+        elif hasattr(model, 'vit') and hasattr(model.vit, 'encoder'):
+            hook = model.vit.encoder.layers[-1].register_forward_hook(capture_activations)
+    else:
+        # For CNNs, find the final convolutional layer
+        final_conv_layer = None
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                final_conv_layer = module
+        
+        if final_conv_layer:
+            hook = final_conv_layer.register_forward_hook(capture_activations)
+    
+    # Run inference
+    with torch.no_grad():
+        predictions = model(image)
+    
+    # Clean up hook
+    if hook:
+        hook.remove()
+    
+    # Get classification weights for target class
+    if is_transformer:
+        # Handle transformer head
+        if hasattr(model, 'head'):
+            class_weights = model.head.weight[target_class].cpu().data.numpy()
+        else:
+            # Alternative: find appropriate classification layer
+            found_weights = False
+            for name, module in model.named_modules():
+                if isinstance(module, nn.Linear) and module.out_features == predictions.size(1):
+                    class_weights = module.weight[target_class].cpu().data.numpy()
+                    found_weights = True
+                    break
+            
+            if not found_weights:
+                # Fallback to uniform weights
+                class_weights = np.ones(activation_maps[0].shape[-1])
+    else:
+        # Handle CNN classifier
+        if hasattr(model, 'classifier') and isinstance(model.classifier, nn.Linear):
+            class_weights = model.classifier.weight[target_class].cpu().data.numpy()
+        elif hasattr(model, 'fc') and isinstance(model.fc, nn.Linear):
+            class_weights = model.fc.weight[target_class].cpu().data.numpy()
+        else:
+            # Find the last linear layer as fallback
+            last_fc = None
+            for module in model.modules():
+                if isinstance(module, nn.Linear):
+                    last_fc = module
+            
+            if last_fc is not None:
+                class_weights = last_fc.weight[target_class].cpu().data.numpy()
+            else:
+                # Last resort: equal weighting
+                class_weights = np.ones(activation_maps[0].shape[1])
+    
+    # Verify we captured features
+    if not activation_maps:
+        raise RuntimeError("Failed to capture activations. Check hook registration.")
+    
+    # Process feature maps
+    features = activation_maps[0].cpu().data.numpy()
+    
+    # Handle different architectures' feature shapes
+    if is_transformer:
+        # Process transformer features (exclude CLS token, reshape to spatial grid)
+        batch, tokens, channels = features.shape
+        
+        # Remove CLS token
+        patch_features = features[:, 1:, :]
+        
+        # Calculate grid dimensions
+        grid_dim = int(np.sqrt(tokens - 1))  # Square root of (tokens - CLS token)
+        
+        # Reshape to spatial grid
+        patch_features = patch_features.reshape(batch, grid_dim, grid_dim, channels)
+        
+        # Convert to channel-first format for consistency
+        features = np.transpose(patch_features, (0, 3, 1, 2))
+    
+    # Remove batch dimension for single image
+    features = np.squeeze(features, axis=0)
+    
+    # Get number of feature channels
+    n_channels = features.shape[0]
+    
+    # Handle weight dimension mismatch
+    if len(class_weights) > n_channels:
+        # Truncate weights to match channels
+        weights = class_weights[:n_channels]
+    elif len(class_weights) == n_channels:
+        # Perfect match - use as is
+        weights = class_weights
+    else:
+        # Use equal weights when dimensions don't align
+        weights = np.ones(n_channels)
+    
+    # Generate heatmap by combining weighted feature maps
+    heatmap = np.zeros(features.shape[1:], dtype=np.float32)
+    for i, weight in enumerate(weights):
+        heatmap += weight * features[i]
+    
+    # Apply ReLU to keep only positive activations
+    heatmap = np.maximum(heatmap, 0)
+    
+    # Normalize to [0,1] range
+    epsilon = 1e-8  # Prevent division by zero
+    heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap) + epsilon)
+    
+    # Resize to match input image dimensions
+    heatmap = resize(heatmap, (image.shape[2], image.shape[3]))
+    
+    return heatmap, predictions
+
+
+def visualize_cam(model, data_loader, device, class_names, num_images=5):
+    """
+    Visualizes Class Activation Maps for selected images from a dataset.
+    Also shows comparisons between correctly and incorrectly classified images.
+    
+    Parameters:
+    -----------
+    model : torch.nn.Module
+        The model to generate visualizations for
+    data_loader : torch.utils.data.DataLoader
+        DataLoader containing the dataset
+    device : torch.device
+        Device to perform computation on
+    class_names : list
+        List of class names for the dataset
+    num_images : int, optional (default=5)
+        Number of random images to visualize
+    """
+    # Collect sample images for visualization
+    image_batch = []
+    label_batch = []
+    
+    # Limit data collection to avoid memory issues
+    sample_limit = num_images * 20  # Increased to find enough misclassified examples
+    
+    # Extract samples from data loader
+    for batch_x, batch_y in data_loader:
+        image_batch.append(batch_x)
+        label_batch.append(batch_y)
+        
+        # Stop after collecting enough samples
+        if sum(b.size(0) for b in image_batch) >= sample_limit:
+            break
+    
+    # Combine all collected samples
+    all_samples = torch.cat(image_batch, dim=0)
+    all_labels = torch.cat(label_batch, dim=0)
+    
+    # Preprocess to find correctly and incorrectly classified images
+    correct_indices = []
+    incorrect_indices = []
+    
+    # Run inference on all samples to identify correct/incorrect predictions
+    model.eval()
+    with torch.no_grad():
+        for idx in range(len(all_samples)):
+            img = all_samples[idx].unsqueeze(0).to(device)
+            true_label = all_labels[idx].item()
+            
+            # Get model prediction
+            output = model(img)
+            _, pred = torch.max(output, 1)
+            pred_label = pred.item()
+            
+            # Sort into correct and incorrect predictions
+            if pred_label == true_label:
+                correct_indices.append(idx)
+            else:
+                incorrect_indices.append(idx)
+    
+    # Check if we have enough data
+    if len(correct_indices) == 0:
+        print("No correctly classified images found in the sample!")
+        return
+    
+    if len(incorrect_indices) == 0:
+        print("No incorrectly classified images found. Model might be too accurate for comparison.")
+        # We'll continue without comparisons
+    
+    # Select samples to visualize
+    samples_to_show = min(num_images, len(correct_indices))
+    selected_indices = random.sample(correct_indices, samples_to_show)
+    
+    # Try to match each correct example with an incorrect example of the same true class
+    comparison_indices = []
+    
+    for idx in selected_indices:
+        true_class = all_labels[idx].item()
+        
+        # Find incorrect examples of the same class
+        matching_incorrect = [i for i in incorrect_indices if all_labels[i].item() == true_class]
+        
+        if matching_incorrect:
+            # Use a matching incorrect example
+            comparison_indices.append(random.choice(matching_incorrect))
+        elif incorrect_indices:
+            # Fall back to any incorrect example
+            comparison_indices.append(random.choice(incorrect_indices))
+        else:
+            # No incorrect examples available
+            comparison_indices.append(None)
+    
+    # Log selection information
+    print(f"Selected {samples_to_show} correctly classified images")
+    print(f"Found matching incorrect examples for {sum(1 for x in comparison_indices if x is not None)} cases")
+    
+    # Create visualization figure (now with 4 columns)
+    fig = plt.figure(figsize=(20, samples_to_show * 4))
+    
+    # Process each selected image
+    for i, (idx, comp_idx) in enumerate(zip(selected_indices, comparison_indices)):
+        # Get the current image and its true label
+        current_img = all_samples[idx]
+        true_label = all_labels[idx].item()
+        
+        # Try to generate CAM with error handling
+        try:
+            # Generate activation map for the correct example
+            heatmap, predictions = generate_cam_output(model, current_img.unsqueeze(0), true_label, device)
+            
+            # Get the model's prediction
+            _, predicted_class = torch.max(predictions, 1)
+            predicted_label = predicted_class.item()
+            
+            # Row 1: Original image (correct prediction)
+            ax1 = plt.subplot(samples_to_show, 4, i*4 + 1)
+            
+            # Display image based on channels
+            if current_img.shape[0] == 3:  # Color image
+                # Convert from CxHxW to HxWxC format
+                display_img = current_img.cpu().numpy().transpose(1, 2, 0)
+                
+                # Normalize if needed
+                if display_img.min() < 0 or display_img.max() > 1:
+                    display_img = (display_img - display_img.min()) / (display_img.max() - display_img.min() + 1e-8)
+                
+                ax1.imshow(display_img)
+            else:  # Grayscale image
+                display_img = current_img.cpu().numpy().squeeze()
+                ax1.imshow(display_img, cmap='gray')
+            
+            ax1.set_title(f"Original (Correct)\nTrue: {class_names[true_label]}")
+            ax1.axis('off')
+            
+            # Row 2: Activation heatmap for correct prediction
+            ax2 = plt.subplot(samples_to_show, 4, i*4 + 2)
+            ax2.imshow(heatmap, cmap='inferno')
+            ax2.set_title("Activation Heatmap")
+            ax2.axis('off')
+            
+            # Row 3: Overlay visualization for correct prediction
+            ax3 = plt.subplot(samples_to_show, 4, i*4 + 3)
+            
+            # Base image
+            if current_img.shape[0] == 3:  # Color
+                ax3.imshow(display_img)
+            else:  # Grayscale
+                ax3.imshow(display_img, cmap='gray')
+            
+            # Add heatmap overlay
+            ax3.imshow(heatmap, alpha=0.6, cmap='inferno')
+            ax3.set_title(f"Overlay\nPred: {class_names[predicted_label]} ✓")
+            ax3.axis('off')
+            
+            # Row 4: Comparison with an incorrectly classified image
+            ax4 = plt.subplot(samples_to_show, 4, i*4 + 4)
+            
+            if comp_idx is not None:
+                # Get the comparison (incorrect) image
+                comp_img = all_samples[comp_idx]
+                comp_true_label = all_labels[comp_idx].item()
+                
+                # Generate CAM for incorrect example
+                comp_heatmap, comp_pred = generate_cam_output(model, comp_img.unsqueeze(0), comp_true_label, device)
+                _, comp_pred_class = torch.max(comp_pred, 1)
+                comp_pred_label = comp_pred_class.item()
+                
+                # Display comparison image with overlay
+                if comp_img.shape[0] == 3:  # Color
+                    comp_display = comp_img.cpu().numpy().transpose(1, 2, 0)
+                    if comp_display.min() < 0 or comp_display.max() > 1:
+                        comp_display = (comp_display - comp_display.min()) / (comp_display.max() - comp_display.min() + 1e-8)
+                    ax4.imshow(comp_display)
+                else:  # Grayscale
+                    comp_display = comp_img.cpu().numpy().squeeze()
+                    ax4.imshow(comp_display, cmap='gray')
+                
+                # Add heatmap overlay
+                ax4.imshow(comp_heatmap, alpha=0.6, cmap='inferno')
+                
+                # Show if it's from the same class or different class
+                same_class = comp_true_label == true_label
+                class_note = "Same class" if same_class else "Different class"
+                ax4.set_title(f"Misclassified ({class_note})\nTrue: {class_names[comp_true_label]}\nPred: {class_names[comp_pred_label]} ✗")
+                ax4.axis('off')
+            else:
+                ax4.text(0.5, 0.5, "No misclassified\nexamples found", 
+                        ha='center', va='center')
+                ax4.axis('off')
+            
+        except Exception as error:
+            # Handle visualization errors
+            err_ax = plt.subplot(samples_to_show, 4, i*4 + 1)
+            err_ax.text(0.5, 0.5, f"Visualization failed:\n{str(error)}", 
+                      ha='center', va='center', color='red')
+            err_ax.axis('off')
+    
+    # Add model information
+    model_name = model.__class__.__name__
+    plt.suptitle(f"Class Activation Map Analysis - {model_name}", fontsize=16)
+    
+    # Layout optimization
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92, hspace=0.3)
+    
+    # Show visualization
+    plt.show()
