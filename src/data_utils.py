@@ -115,7 +115,7 @@ def create_dataloaders(datasets_dict, batch_size=32, num_workers=4):
     Returns:
         dict: Dictionary containing DataLoaders for each split
     """
-    # Create DataLoaders
+    # Create DataLoaders 
     dataloaders_dict = {
         'train': DataLoader(
             datasets_dict['train'],
@@ -142,6 +142,45 @@ def create_dataloaders(datasets_dict, batch_size=32, num_workers=4):
     
     return dataloaders_dict
 
+def create_triplet_dataloaders(datasets_dict, batch_size=32, num_workers=4):
+    """
+    Create DataLoaders for triplet-based learning (anchor, positive, negative)
+    
+    Args:
+        datasets_dict (dict): Dictionary containing 'train', 'val', and 'test' datasets
+            Each dataset should support triplet sampling
+        batch_size (int): Batch size for training and evaluation
+        num_workers (int): Number of worker threads for loading data
+        
+    Returns:
+        dict: Dictionary containing DataLoaders for each split
+    """
+    # Create DataLoaders that yield triplets
+    dataloaders_dict = {
+        'train': DataLoader(
+            TripletDataset(datasets_dict['train']),  # Wrap with a TripletDataset
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True
+        ),
+        'val': DataLoader(
+            TripletDataset(datasets_dict['val']),  # Wrap with a TripletDataset
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True
+        ),
+        'test': DataLoader(
+            TripletDataset(datasets_dict['test']),  # Wrap with a TripletDataset
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True
+        )
+    }
+    
+    return dataloaders_dict
 
 def get_flower_labels(path):
     """
@@ -162,3 +201,62 @@ def get_flower_labels(path):
         raise FileNotFoundError(f"The file at path '{path}' was not found.")
     except Exception as e:
         raise RuntimeError(f"An error occurred while reading the file: {e}")
+
+
+class TripletDataset():
+    """
+    A dataset wrapper that returns triplets (anchor, positive, negative) for triplet loss
+    """
+    def __init__(self, dataset):
+        """
+        Args:
+            dataset: The original dataset to wrap
+        """
+        self.dataset = dataset
+        self.labels = self._get_labels()
+        self.label_to_indices = self._get_label_to_indices()
+        
+    def _get_labels(self):
+        """Get all labels from the dataset"""
+        if hasattr(self.dataset, 'targets'):
+            return self.dataset.targets
+        elif hasattr(self.dataset, 'labels'):
+            return self.dataset.labels
+        else:
+            # Fallback: extract labels by iterating through the dataset
+            return [self.dataset[i][1] for i in range(len(self.dataset))]
+            
+    def _get_label_to_indices(self):
+        """Create a mapping from label to all indices that have this label"""
+        labels = self._get_labels()
+        label_to_indices = {}
+        
+        for idx, label in enumerate(labels):
+            if label not in label_to_indices:
+                label_to_indices[label] = []
+            label_to_indices[label].append(idx)
+            
+        return label_to_indices
+        
+    def __getitem__(self, index):
+        """
+        Returns a triplet (anchor, positive, negative)
+        """
+        anchor_img, anchor_label = self.dataset[index]
+        
+        # Get a positive example (same class as anchor)
+        positive_indices = self.label_to_indices[anchor_label]
+        positive_index = random.choice([i for i in positive_indices if i != index])
+        positive_img, _ = self.dataset[positive_index]
+        
+        # Get a negative example (different class than anchor)
+        negative_label = random.choice([
+            l for l in self.label_to_indices.keys() if l != anchor_label
+        ])
+        negative_index = random.choice(self.label_to_indices[negative_label])
+        negative_img, _ = self.dataset[negative_index]
+        
+        return (anchor_img, positive_img, negative_img), anchor_label
+        
+    def __len__(self):
+        return len(self.dataset)
