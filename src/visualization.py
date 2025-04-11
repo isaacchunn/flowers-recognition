@@ -736,13 +736,6 @@ def plot_comprehensive_model_comparison(df, figsize=(18, 10), save_path=None):
     
     return fig
 
-import torch
-import torch.nn as nn
-import numpy as np
-import matplotlib.pyplot as plt
-from skimage.transform import resize
-import random
-
 def generate_cam_output(model, image, target_class, device):
     """
     This creates a Class Activation Mapping visualization for our custom traditional cnn 
